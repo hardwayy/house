@@ -13,6 +13,7 @@
 #include "DrawDebugHelpers.h"
 #include "PhysicsEngine/PhysicsHandleComponent.h"
 #include "GrabbableActor.h"
+#include "Kismet/KismetMathLibrary.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
@@ -84,11 +85,9 @@ void AhouseCharacter::Tick(float DeltaTime)
 
 	if (PhysicsHandle && PhysicsHandle->GetGrabbedComponent())
 	{
-		// 1. Dati Camera
 		FVector CamLoc = FollowCamera->GetComponentLocation();
 		FRotator CamRot = FollowCamera->GetComponentRotation();
 
-		// 2. Calcolo Posizione (Matematica Vettoriale Standard)
 		FVector BaseLoc = CamLoc
 			+ (CamRot.Vector() * HoldOffset.X)
 			+ (FRotationMatrix(CamRot).GetScaledAxis(EAxis::Y) * HoldOffset.Y)
@@ -96,21 +95,15 @@ void AhouseCharacter::Tick(float DeltaTime)
 
 		FVector FinalLoc = BaseLoc - (CamRot.Vector() * CurrentPullBack);
 
-		// 3. Calcolo Rotazione (CORRETTO CON QUATERNONI)
-		// Questo risolve il problema dell'oggetto che si storce guardando in alto/basso.
-		FRotator FinalRot = CamRot;
+	
+		FRotator FinalRot = FollowCamera->GetComponentRotation(); 
 
 		AActor* HeldActor = PhysicsHandle->GetGrabbedComponent()->GetOwner();
 		if (AGrabbableActor* GrabbableItem = Cast<AGrabbableActor>(HeldActor))
 		{
-			// Moltiplichiamo i Quaternoni: equivale a dire "Applica Offset SOPRA la rotazione Camera"
-			FQuat CameraQuat = CamRot.Quaternion();
-			FQuat OffsetQuat = GrabbableItem->HoldRotationOffset.Quaternion();
-
-			FinalRot = (CameraQuat * OffsetQuat).Rotator();
+			FinalRot = UKismetMathLibrary::ComposeRotators(GrabbableItem->HoldRotationOffset, FollowCamera->GetComponentRotation());
 		}
 
-		// 4. Aggiorniamo il Physics Handle
 		PhysicsHandle->SetTargetLocationAndRotation(FinalLoc, FinalRot);
 	}
 	else
@@ -316,14 +309,13 @@ void AhouseCharacter::OnGrabInput()
 
 			// --- CALCOLO ROTAZIONE ---
 			// Rotazione Camera + Offset specifico dell'oggetto (definito nel BP dell'oggetto)
-			FRotator TargetRotation = FollowCamera->GetComponentRotation() + GrabbableItem->HoldRotationOffset;
+			FRotator TargetRotation = UKismetMathLibrary::ComposeRotators(GrabbableItem->HoldRotationOffset, FollowCamera->GetComponentRotation());
 
-			// --- ESECUZIONE GRAB ---
 			PhysicsHandle->GrabComponentAtLocationWithRotation(
 				HitComponent,
 				NAME_None,
-				HitComponent->GetComponentLocation(), // Snap al Centro (Pivot) dell'oggetto
-				TargetRotation                        // Rotazione allineata
+				HitComponent->GetComponentLocation(), // Snap al centro
+				TargetRotation // <--- ORA USIAMO QUESTA!
 			);
 
 		
@@ -513,16 +505,14 @@ void AhouseCharacter::EquipItemAtIndex(int32 Index)
 		SetItemCollision(NewComp, true);
 		NewComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
-		// --- CALCOLO ROTAZIONE ---
-		// Stessa logica del Grab: Camera + Offset Oggetto
-		FRotator TargetRotation = FollowCamera->GetComponentRotation() + NewItem->HoldRotationOffset;
 
-		// AFFERRALO
+		FRotator TargetRotation = UKismetMathLibrary::ComposeRotators(NewItem->HoldRotationOffset, FollowCamera->GetComponentRotation());
+
 		PhysicsHandle->GrabComponentAtLocationWithRotation(
 			NewComp,
 			NAME_None,
-			NewComp->GetComponentLocation(), // Snap al Centro
-			TargetRotation                   // Rotazione allineata
+			NewComp->GetComponentLocation(),
+			TargetRotation 
 		);
 
 		// Reset variabili di stato
