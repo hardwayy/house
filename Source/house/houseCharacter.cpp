@@ -17,22 +17,16 @@ DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
 AhouseCharacter::AhouseCharacter()
 {
-	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
-	// --- FIRST PERSON ROTATION SETTINGS ---
-	// Why: In FPS, when you move the mouse right, the whole body should turn right.
-	// Unlike Third Person, we don't want independent camera rotation.
-	bUseControllerRotationPitch = false; // Usually false, we don't want the capsule to tip over looking up
-	bUseControllerRotationYaw = true;    // TRUE: Character rotates with mouse input
+	bUseControllerRotationPitch = false; 
+	bUseControllerRotationYaw = true;    
 	bUseControllerRotationRoll = false;
 
-	// Configure character movement
-	// Why: In FPS, we want to strafe. We don't want the character to turn to face the movement direction automatically.
-	GetCharacterMovement()->bOrientRotationToMovement = false; // FALSE: Standard FPS movement
-	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f); // Still useful for smooth turns if needed
+	
+	GetCharacterMovement()->bOrientRotationToMovement = false; 
+	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f); 
 
-	// Note: For faster iteration times these variables, and many more, can be tweaked in the Character Blueprint
 	GetCharacterMovement()->JumpZVelocity = 500.f;
 	GetCharacterMovement()->AirControl = 0.35f;
 	GetCharacterMovement()->MaxWalkSpeed = 500.f;
@@ -40,30 +34,29 @@ AhouseCharacter::AhouseCharacter()
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 	GetCharacterMovement()->BrakingDecelerationFalling = 1500.0f;
 
-	// --- CAMERA SETUP ---
-	// No CameraBoom (SpringArm) needed for True First Person.
 
-	// Create a follow camera
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 
-	// Attach directly to the Mesh on the "head" socket
-	// CRITICAL: Ensure your Skeleton actually has a socket named "head" (case sensitive!)
 	FollowCamera->SetupAttachment(GetMesh(), TEXT("head"));
 
-	// Enable PawnControlRotation so the camera follows the mouse/controller input
 	FollowCamera->bUsePawnControlRotation = true;
 
-	// Adjust camera position slightly to avoid clipping through the face geometry (optional but recommended)
 	FollowCamera->SetRelativeLocation(FVector(10.f, 0.f, 0.f));
 
 	PhysicsHandle = CreateDefaultSubobject<UPhysicsHandleComponent>(TEXT("PhysicsHandle"));
+	PhysicsHandle->LinearDamping = 200.f;
+
+	PhysicsHandle->LinearStiffness = 15000.f;
+
+	PhysicsHandle->InterpolationSpeed = 50.f;
+
+	PhysicsHandle->AngularDamping = 100.f;
+	PhysicsHandle->AngularStiffness = 15000.f;
 }
 void AhouseCharacter::BeginPlay()
 {
-	// 1. Chiama la versione base della funzione (obbligatorio!)
 	Super::BeginPlay();
 
-	// 2. Ottieni il Player Controller (il "pilota")
 	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
 	{
 		// 3. Ottieni il Subsystem dell'Input (il gestore delle periferiche)
@@ -138,6 +131,7 @@ void AhouseCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		EnhancedInputComponent->BindAction(Slot2Action, ETriggerEvent::Started, this, &AhouseCharacter::OnSelectSlot2);
 		EnhancedInputComponent->BindAction(Slot3Action, ETriggerEvent::Started, this, &AhouseCharacter::OnSelectSlot3);
 		EnhancedInputComponent->BindAction(Slot4Action, ETriggerEvent::Started, this, &AhouseCharacter::OnSelectSlot4);
+		EnhancedInputComponent->BindAction(UseItemAction, ETriggerEvent::Started, this, &AhouseCharacter::OnUseItemInput);
 	}
 	else
 	{
@@ -257,8 +251,9 @@ void AhouseCharacter::OnGrabInput()
 	FVector End = Start + (FollowCamera->GetForwardVector() * 250.f);
 
 	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(this); 
+	Params.AddIgnoredActor(this);
 
+	// Ignora l'oggetto che stiamo tenendo, così possiamo vedere attraverso di esso
 	AActor* CurrentHeldActor = nullptr;
 	if (PhysicsHandle && PhysicsHandle->GetGrabbedComponent())
 	{
@@ -266,50 +261,59 @@ void AhouseCharacter::OnGrabInput()
 		Params.AddIgnoredActor(CurrentHeldActor);
 	}
 
+	// Esegui il Raycast
 	if (GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params))
 	{
+		// Controlla se è un oggetto "Grabbable" valido
+		AGrabbableActor* GrabbableItem = Cast<AGrabbableActor>(HitResult.GetActor());
+
+		// Se non è grabbable o non simula la fisica, esci
+		if (!GrabbableItem) return;
+
 		UPrimitiveComponent* HitComponent = HitResult.GetComponent();
+		if (!HitComponent || !HitComponent->IsSimulatingPhysics()) return;
 
-		if (HitComponent && HitComponent->IsSimulatingPhysics())
+		// --- INIZIO LOGICA SCAMBIO ---
+
+		// 1. Se avevamo un oggetto, mettiamolo via
+		if (CurrentHeldActor)
 		{
-			AGrabbableActor* Grabbable = Cast<AGrabbableActor>(HitResult.GetActor());
+			PhysicsHandle->ReleaseComponent();
+			AddToInventory(CurrentHeldActor); // Lo nasconde e lo mette in tasca
 
-			if(!Grabbable)
-			{
-				UE_LOG(LogTemplateCharacter, Warning, TEXT("Hit object is not Grabbable: %s"), *HitResult.GetActor()->GetName());
-				return;
-			}
-			if (CurrentHeldActor)
-			{
-				PhysicsHandle->ReleaseComponent();
-
-				AddToInventory(CurrentHeldActor);
-
-				UE_LOG(LogTemplateCharacter, Log, TEXT("Swapped items: Put away %s"), *CurrentHeldActor->GetName());
-			}
-
-			PhysicsHandle->GrabComponentAtLocationWithRotation(
-				HitComponent,
-				NAME_None,
-				HitResult.Location,
-				HitComponent->GetComponentRotation()
-			);
-
-			HitComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-
-			AActor* NewActor = HitResult.GetActor();
-			if (NewActor)
-			{
-				Inventory.AddUnique(NewActor);
-
-				if (OnInventoryUpdated.IsBound()) OnInventoryUpdated.Broadcast();
-			}
-
-			
-			UE_LOG(LogTemplateCharacter, Log, TEXT("Grabbed new object: %s"), *NewActor->GetName());
+			UE_LOG(LogTemplateCharacter, Log, TEXT("Swapped: Stored %s"), *CurrentHeldActor->GetName());
 		}
+
+		// 2. Prendi il NUOVO oggetto
+		// Nota: Usiamo GrabbableItem (l'attore) e HitComponent (il componente colpito)
+
+		// Prima assicurati che le collisioni siano attive per il grab, poi disabilita quelle col pawn
+		HitComponent->SetSimulatePhysics(true);
+		HitComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+
+		// GRAB!
+		PhysicsHandle->GrabComponentAtLocationWithRotation(
+			HitComponent,
+			NAME_None,
+			HitComponent->GetComponentLocation(), // Snap al centro
+			HitComponent->GetComponentRotation()
+		);
+
+		// 3. Setup Variabili del Nuovo Oggetto
+		SetItemCollision(HitComponent, true); // Diventa "Fantasma" per evitare compenetrazioni
+
+		// Aggiungi all'inventario (senza nasconderlo, perché lo teniamo in mano)
+		if (!Inventory.Contains(GrabbableItem))
+		{
+			Inventory.AddUnique(GrabbableItem);
+			if (OnInventoryUpdated.IsBound()) OnInventoryUpdated.Broadcast();
+		}
+
+		// Reset Timer per il lancio
+		ThrowButtonPressTime = GetWorld()->GetTimeSeconds();
+
+		UE_LOG(LogTemplateCharacter, Log, TEXT("Grabbed New Object: %s"), *GrabbableItem->GetName());
 	}
-	
 }
 void AhouseCharacter::OnThrowInputStarted()
 {
@@ -352,7 +356,7 @@ void AhouseCharacter::OnThrowInputCompleted()
 
 	if (HeldComponent)
 	{
-
+		SetItemCollision(HeldComponent, false);
 		HeldComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
 
 
@@ -463,12 +467,13 @@ void AhouseCharacter::EquipItemAtIndex(int32 Index)
 		NewItem->SetActorLocation(StartLoc);
 
 		NewComp->SetSimulatePhysics(true);
+		SetItemCollision(NewComp, true);
 		NewComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
 		PhysicsHandle->GrabComponentAtLocationWithRotation(
 			NewComp,
 			NAME_None,
-			StartLoc,
+			NewComp->GetComponentLocation(),
 			NewItem->GetActorRotation()
 		);
 
@@ -476,5 +481,47 @@ void AhouseCharacter::EquipItemAtIndex(int32 Index)
 		ThrowButtonPressTime = GetWorld()->GetTimeSeconds();
 
 		UE_LOG(LogTemplateCharacter, Log, TEXT("Equipped Item from Slot %d: %s"), Index + 1, *NewItem->GetName());
+	}
+}
+void AhouseCharacter::SetItemCollision(UPrimitiveComponent* Item, bool bIsHeld)
+{
+	if (!Item) return;
+
+	if (bIsHeld)
+	{
+
+		Item->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Ignore);
+		Item->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Ignore);
+		Item->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		Item->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Ignore);
+
+		
+	}
+	else
+	{
+		
+		Item->SetCollisionProfileName(TEXT("PhysicsActor"));
+	}
+}
+void AhouseCharacter::OnUseItemInput()
+{
+	if (PhysicsHandle && PhysicsHandle->GetGrabbedComponent())
+	{
+		AActor* HeldActor = PhysicsHandle->GetGrabbedComponent()->GetOwner();
+
+		// 2. Controlla se è un GrabbableActor (e non un muro o altro per errore)
+		AGrabbableActor* GrabbableItem = Cast<AGrabbableActor>(HeldActor);
+
+		if (GrabbableItem)
+		{
+
+			GrabbableItem->OnUse(GrabbableItem);
+
+			UE_LOG(LogTemplateCharacter, Log, TEXT("Used Item: %s"), *GrabbableItem->GetName());
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemplateCharacter, Warning, TEXT("Cannot use item: Hand is empty."));
 	}
 }

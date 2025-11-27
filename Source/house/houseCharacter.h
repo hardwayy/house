@@ -99,6 +99,11 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
 	class UInputAction* Slot4Action;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+	class UInputAction* UseItemAction;
+
+	// Funzione chiamata dal tasto
+	void OnUseItemInput();
 
 	void OnSelectSlot1() { EquipItemAtIndex(0); }
 	void OnSelectSlot2() { EquipItemAtIndex(1); }
@@ -145,6 +150,7 @@ protected:
 	
 	void OnThrowInputStarted();   
 	void OnThrowInputCompleted(); 
+	void SetItemCollision(UPrimitiveComponent* Item, bool bIsHeld);
 
 public:
 

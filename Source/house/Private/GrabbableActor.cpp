@@ -29,3 +29,9 @@ void AGrabbableActor::Interact_Implementation(AActor* InstigatorActor)
 		UE_LOG(LogTemp, Log, TEXT("%s has been picked up via Interaction."), *GetName());
 	}
 }
+void AGrabbableActor::OnUse_Implementation(AActor* User)
+{
+	// Logica di default (es. se è un sasso, non fa nulla).
+	// Puoi mettere un log per debug.
+	UE_LOG(LogTemp, Log, TEXT("OnUse called on %s (Default Implementation)"), *GetName());
+}
