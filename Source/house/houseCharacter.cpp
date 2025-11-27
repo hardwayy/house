@@ -83,33 +83,46 @@ void AhouseCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (PhysicsHandle && PhysicsHandle->GetGrabbedComponent())
-	{
-		FVector CamLoc = FollowCamera->GetComponentLocation();
-		FRotator CamRot = FollowCamera->GetComponentRotation();
-
-		FVector BaseLoc = CamLoc
-			+ (CamRot.Vector() * HoldOffset.X)
-			+ (FRotationMatrix(CamRot).GetScaledAxis(EAxis::Y) * HoldOffset.Y)
-			+ (FRotationMatrix(CamRot).GetScaledAxis(EAxis::Z) * HoldOffset.Z);
-
-		FVector FinalLoc = BaseLoc - (CamRot.Vector() * CurrentPullBack);
-
-	
-		FRotator FinalRot = FollowCamera->GetComponentRotation(); 
-
-		AActor* HeldActor = PhysicsHandle->GetGrabbedComponent()->GetOwner();
-		if (AGrabbableActor* GrabbableItem = Cast<AGrabbableActor>(HeldActor))
-		{
-			FinalRot = UKismetMathLibrary::ComposeRotators(GrabbableItem->HoldRotationOffset, FollowCamera->GetComponentRotation());
-		}
-
-		PhysicsHandle->SetTargetLocationAndRotation(FinalLoc, FinalRot);
-	}
-	else
+	// Controllo rapido: Se non abbiamo un PhysicsHandle o non stiamo tenendo nulla, usciamo subito.
+	if (!PhysicsHandle || !PhysicsHandle->GetGrabbedComponent())
 	{
 		CurrentPullBack = 0.f;
+		CurrentHeldObject = nullptr; // Reset sicurezza
+		return;
 	}
+
+	// 1. Calcolo Posizione Target
+	const FVector CamLoc = FollowCamera->GetComponentLocation();
+	const FRotator CamRot = FollowCamera->GetComponentRotation();
+	const FVector ForwardDir = CamRot.Vector();
+
+	// Costruiamo la posizione target usando gli assi della camera
+	FVector BaseLoc = CamLoc
+		+ (ForwardDir * HoldOffset.X)
+		+ (FRotationMatrix(CamRot).GetScaledAxis(EAxis::Y) * HoldOffset.Y)
+		+ (FRotationMatrix(CamRot).GetScaledAxis(EAxis::Z) * HoldOffset.Z);
+
+	// Applichiamo il "PullBack" (effetto molla quando tocchi i muri)
+	FVector FinalLoc = BaseLoc - (ForwardDir * CurrentPullBack);
+
+	// 2. Calcolo Rotazione Target (FIXED ROTATION)
+	FRotator FinalRot = CamRot;
+
+	// Usiamo il puntatore cachato invece di fare Cast ogni frame
+	if (CurrentHeldObject)
+	{
+		// MATEMATICA QUATERNIONI:
+		// Convertiamo tutto in Quaternioni per evitare Gimbal Lock.
+		// Ordine: RotazioneCamera * OffsetOggetto.
+		// Questo applica l'offset dell'oggetto RELATIVAMENTE alla vista della camera.
+		FQuat CameraQuat = CamRot.Quaternion();
+		FQuat OffsetQuat = CurrentHeldObject->HoldRotationOffset.Quaternion();
+
+		FinalRot = (CameraQuat * OffsetQuat).Rotator();
+	}
+
+	// 3. Applichiamo al Physics Handle
+	PhysicsHandle->SetTargetLocationAndRotation(FinalLoc, FinalRot);
 }
 
 void AhouseCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -254,89 +267,69 @@ void AhouseCharacter::TryInteract()
 
 void AhouseCharacter::OnGrabInput()
 {
-	// 1. SETUP RAYCAST
 	if (!FollowCamera) return;
 
 	FHitResult HitResult;
 	FVector Start = FollowCamera->GetComponentLocation();
-	FVector End = Start + (FollowCamera->GetForwardVector() * 250.f); // 2.5 metri di raggio
+	FVector End = Start + (FollowCamera->GetForwardVector() * 250.f);
 
 	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(this); // Ignora il giocatore
+	Params.AddIgnoredActor(this);
+	AActor* OldActor = nullptr;
 
-	// --- LOGICA VISIVA: IGNORA OGGETTO TENUTO ---
-	// Se stiamo tenendo qualcosa, aggiungiamolo alla lista "Da Ignorare"
-	// così il raggio lo attraversa e vede cosa c'è dietro (per lo swap).
-	AActor* CurrentHeldActor = nullptr;
 	if (PhysicsHandle && PhysicsHandle->GetGrabbedComponent())
 	{
-		CurrentHeldActor = PhysicsHandle->GetGrabbedComponent()->GetOwner();
-		Params.AddIgnoredActor(CurrentHeldActor);
+		OldActor = PhysicsHandle->GetGrabbedComponent()->GetOwner();
+		Params.AddIgnoredActor(OldActor);
 	}
 
-	// Eseguiamo il trace
 	if (GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params))
 	{
-		// 2. FILTRO DI CLASSE
-		// Prima di tutto, controlliamo se è un oggetto "Raccoglibile" (la nostra classe custom).
-		// Se è un muro o una porta interattiva, il Cast fallisce e usciamo.
 		AGrabbableActor* GrabbableItem = Cast<AGrabbableActor>(HitResult.GetActor());
-
-		if (!GrabbableItem)
-		{
-			// Debug opzionale: colpito qualcosa che non si può prendere
-			// UE_LOG(LogTemplateCharacter, Warning, TEXT("Hit object is not a GrabbableActor"));
-			return;
-		}
+		if (!GrabbableItem) return;
 
 		UPrimitiveComponent* HitComponent = HitResult.GetComponent();
 
-		// 3. CONTROLLO FISICO
 		if (HitComponent && HitComponent->IsSimulatingPhysics())
 		{
-			// --- LOGICA SCAMBIO (SWAP) ---
-			// Se avevamo già qualcosa in mano, mettiamolo via PRIMA di prendere il nuovo.
-			if (CurrentHeldActor)
+			// --- SWAP LOGIC ---
+			if (OldActor)
 			{
 				PhysicsHandle->ReleaseComponent();
-
-				// Mettilo via (Nascondi, disabilita collisioni, spegni fisica)
-				// Usiamo AddToInventory perché gestisce già la logica "Pocket"
-				AddToInventory(CurrentHeldActor);
-
-				UE_LOG(LogTemplateCharacter, Log, TEXT("Swapped items: Stored %s"), *CurrentHeldActor->GetName());
+				AddToInventory(OldActor);
 			}
 
-			// --- CALCOLO ROTAZIONE ---
-			// Rotazione Camera + Offset specifico dell'oggetto (definito nel BP dell'oggetto)
-			FRotator TargetRotation = UKismetMathLibrary::ComposeRotators(GrabbableItem->HoldRotationOffset, FollowCamera->GetComponentRotation());
+			// CACHE POINTER
+			CurrentHeldObject = GrabbableItem;
 
+			FQuat CameraQuat = FollowCamera->GetComponentRotation().Quaternion();
+			FQuat OffsetQuat = GrabbableItem->HoldRotationOffset.Quaternion();
+			FRotator TargetRotation = (CameraQuat * OffsetQuat).Rotator();
+
+			HitComponent->SetWorldRotation(TargetRotation, false, nullptr, ETeleportType::TeleportPhysics);
+
+			
 			PhysicsHandle->GrabComponentAtLocationWithRotation(
 				HitComponent,
 				NAME_None,
-				HitComponent->GetComponentLocation(), // Snap al centro
-				TargetRotation // <--- ORA USIAMO QUESTA!
+				HitComponent->GetComponentLocation(), 
+				TargetRotation
 			);
 
-		
+			// Setup collisioni
 			SetItemCollision(HitComponent, true);
-
 			HitComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-
 
 			if (!Inventory.Contains(GrabbableItem))
 			{
 				Inventory.AddUnique(GrabbableItem);
-
-				// Aggiorna Widget
 				if (OnInventoryUpdated.IsBound()) OnInventoryUpdated.Broadcast();
 			}
 
-			// Reset Timer per il lancio
 			bIsGrabbingObject = true;
 			ThrowButtonPressTime = GetWorld()->GetTimeSeconds();
 
-			UE_LOG(LogTemplateCharacter, Log, TEXT("Grabbed object: %s"), *GrabbableItem->GetName());
+			UE_LOG(LogTemplateCharacter, Log, TEXT("Grabbed object with FIXED rotation: %s"), *GrabbableItem->GetName());
 		}
 	}
 }
@@ -494,25 +487,29 @@ void AhouseCharacter::EquipItemAtIndex(int32 Index)
 	UPrimitiveComponent* NewComp = Cast<UPrimitiveComponent>(NewItem->GetRootComponent());
 	if (NewComp)
 	{
-		// TELETRASPORTO: Spostalo davanti alla faccia PRIMA di attivare la fisica
-		FVector StartLoc = FollowCamera->GetComponentLocation() + (FollowCamera->GetForwardVector() * 100.f);
-		NewItem->SetActorLocation(StartLoc);
+		// Posizioniamo l'oggetto davanti alla camera
+		FVector StartLoc = FollowCamera->GetComponentLocation() + (FollowCamera->GetForwardVector() * HoldOffset.X); // Usa HoldOffset.X se vuoi la distanza giusta
 
-		// Attiva fisica
+		// Calcolo rotazione fissa
+		FQuat CameraQuat = FollowCamera->GetComponentRotation().Quaternion();
+		FQuat OffsetQuat = NewItem->HoldRotationOffset.Quaternion();
+		FRotator TargetRotation = (CameraQuat * OffsetQuat).Rotator();
+
+		// 1. SET POSITION & ROTATION PRIMA DI ATTIVARE LA FISICA
+		NewItem->SetActorLocationAndRotation(StartLoc, TargetRotation, false, nullptr, ETeleportType::TeleportPhysics);
+
+		// 2. Attiva fisica
 		NewComp->SetSimulatePhysics(true);
 
-		// Setup collisioni "Fantasma" e ignora Pawn
 		SetItemCollision(NewComp, true);
 		NewComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
-
-		FRotator TargetRotation = UKismetMathLibrary::ComposeRotators(NewItem->HoldRotationOffset, FollowCamera->GetComponentRotation());
-
+		// 3. GRAB (Ora l'oggetto è già allineato perfettamente)
 		PhysicsHandle->GrabComponentAtLocationWithRotation(
 			NewComp,
 			NAME_None,
-			NewComp->GetComponentLocation(),
-			TargetRotation 
+			NewComp->GetComponentLocation(), // Presa al centro/pivot
+			TargetRotation
 		);
 
 		// Reset variabili di stato

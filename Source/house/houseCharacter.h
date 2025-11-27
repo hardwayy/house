@@ -121,6 +121,10 @@ public:
 	// Override Tick function (needed to update the physics handle position)
 	virtual void Tick(float DeltaTime) override;
 
+private:
+	UPROPERTY()
+	class AGrabbableActor* CurrentHeldObject;
+
 protected:
 
 	/** Initialize input action bindings */
@@ -180,6 +184,8 @@ protected:
 	// Configurazione Slot
 	UPROPERTY(EditAnywhere, Category = "Inventory")
 	int32 MaxInventorySlots = 4;
+
+
 
 public:
 	// L'evento a cui il Widget si iscriverà
