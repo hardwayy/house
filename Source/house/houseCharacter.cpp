@@ -13,6 +13,7 @@
 #include "DrawDebugHelpers.h"
 #include "PhysicsEngine/PhysicsHandleComponent.h"
 #include "GrabbableActor.h"
+
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
 AhouseCharacter::AhouseCharacter()
@@ -83,10 +84,11 @@ void AhouseCharacter::Tick(float DeltaTime)
 
 	if (PhysicsHandle && PhysicsHandle->GetGrabbedComponent())
 	{
-
+		// 1. Dati Camera
 		FVector CamLoc = FollowCamera->GetComponentLocation();
 		FRotator CamRot = FollowCamera->GetComponentRotation();
 
+		// 2. Calcolo Posizione (Matematica Vettoriale Standard)
 		FVector BaseLoc = CamLoc
 			+ (CamRot.Vector() * HoldOffset.X)
 			+ (FRotationMatrix(CamRot).GetScaledAxis(EAxis::Y) * HoldOffset.Y)
@@ -94,7 +96,22 @@ void AhouseCharacter::Tick(float DeltaTime)
 
 		FVector FinalLoc = BaseLoc - (CamRot.Vector() * CurrentPullBack);
 
-		PhysicsHandle->SetTargetLocationAndRotation(FinalLoc, CamRot);
+		// 3. Calcolo Rotazione (CORRETTO CON QUATERNONI)
+		// Questo risolve il problema dell'oggetto che si storce guardando in alto/basso.
+		FRotator FinalRot = CamRot;
+
+		AActor* HeldActor = PhysicsHandle->GetGrabbedComponent()->GetOwner();
+		if (AGrabbableActor* GrabbableItem = Cast<AGrabbableActor>(HeldActor))
+		{
+			// Moltiplichiamo i Quaternoni: equivale a dire "Applica Offset SOPRA la rotazione Camera"
+			FQuat CameraQuat = CamRot.Quaternion();
+			FQuat OffsetQuat = GrabbableItem->HoldRotationOffset.Quaternion();
+
+			FinalRot = (CameraQuat * OffsetQuat).Rotator();
+		}
+
+		// 4. Aggiorniamo il Physics Handle
+		PhysicsHandle->SetTargetLocationAndRotation(FinalLoc, FinalRot);
 	}
 	else
 	{
@@ -244,16 +261,19 @@ void AhouseCharacter::TryInteract()
 
 void AhouseCharacter::OnGrabInput()
 {
+	// 1. SETUP RAYCAST
 	if (!FollowCamera) return;
 
 	FHitResult HitResult;
 	FVector Start = FollowCamera->GetComponentLocation();
-	FVector End = Start + (FollowCamera->GetForwardVector() * 250.f);
+	FVector End = Start + (FollowCamera->GetForwardVector() * 250.f); // 2.5 metri di raggio
 
 	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(this);
+	Params.AddIgnoredActor(this); // Ignora il giocatore
 
-	// Ignora l'oggetto che stiamo tenendo, così possiamo vedere attraverso di esso
+	// --- LOGICA VISIVA: IGNORA OGGETTO TENUTO ---
+	// Se stiamo tenendo qualcosa, aggiungiamolo alla lista "Da Ignorare"
+	// così il raggio lo attraversa e vede cosa c'è dietro (per lo swap).
 	AActor* CurrentHeldActor = nullptr;
 	if (PhysicsHandle && PhysicsHandle->GetGrabbedComponent())
 	{
@@ -261,58 +281,71 @@ void AhouseCharacter::OnGrabInput()
 		Params.AddIgnoredActor(CurrentHeldActor);
 	}
 
-	// Esegui il Raycast
+	// Eseguiamo il trace
 	if (GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params))
 	{
-		// Controlla se è un oggetto "Grabbable" valido
+		// 2. FILTRO DI CLASSE
+		// Prima di tutto, controlliamo se è un oggetto "Raccoglibile" (la nostra classe custom).
+		// Se è un muro o una porta interattiva, il Cast fallisce e usciamo.
 		AGrabbableActor* GrabbableItem = Cast<AGrabbableActor>(HitResult.GetActor());
 
-		// Se non è grabbable o non simula la fisica, esci
-		if (!GrabbableItem) return;
+		if (!GrabbableItem)
+		{
+			// Debug opzionale: colpito qualcosa che non si può prendere
+			// UE_LOG(LogTemplateCharacter, Warning, TEXT("Hit object is not a GrabbableActor"));
+			return;
+		}
 
 		UPrimitiveComponent* HitComponent = HitResult.GetComponent();
-		if (!HitComponent || !HitComponent->IsSimulatingPhysics()) return;
 
-		// --- INIZIO LOGICA SCAMBIO ---
-
-		// 1. Se avevamo un oggetto, mettiamolo via
-		if (CurrentHeldActor)
+		// 3. CONTROLLO FISICO
+		if (HitComponent && HitComponent->IsSimulatingPhysics())
 		{
-			PhysicsHandle->ReleaseComponent();
-			AddToInventory(CurrentHeldActor); // Lo nasconde e lo mette in tasca
+			// --- LOGICA SCAMBIO (SWAP) ---
+			// Se avevamo già qualcosa in mano, mettiamolo via PRIMA di prendere il nuovo.
+			if (CurrentHeldActor)
+			{
+				PhysicsHandle->ReleaseComponent();
 
-			UE_LOG(LogTemplateCharacter, Log, TEXT("Swapped: Stored %s"), *CurrentHeldActor->GetName());
+				// Mettilo via (Nascondi, disabilita collisioni, spegni fisica)
+				// Usiamo AddToInventory perché gestisce già la logica "Pocket"
+				AddToInventory(CurrentHeldActor);
+
+				UE_LOG(LogTemplateCharacter, Log, TEXT("Swapped items: Stored %s"), *CurrentHeldActor->GetName());
+			}
+
+			// --- CALCOLO ROTAZIONE ---
+			// Rotazione Camera + Offset specifico dell'oggetto (definito nel BP dell'oggetto)
+			FRotator TargetRotation = FollowCamera->GetComponentRotation() + GrabbableItem->HoldRotationOffset;
+
+			// --- ESECUZIONE GRAB ---
+			PhysicsHandle->GrabComponentAtLocationWithRotation(
+				HitComponent,
+				NAME_None,
+				HitComponent->GetComponentLocation(), // Snap al Centro (Pivot) dell'oggetto
+				TargetRotation                        // Rotazione allineata
+			);
+
+		
+			SetItemCollision(HitComponent, true);
+
+			HitComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+
+
+			if (!Inventory.Contains(GrabbableItem))
+			{
+				Inventory.AddUnique(GrabbableItem);
+
+				// Aggiorna Widget
+				if (OnInventoryUpdated.IsBound()) OnInventoryUpdated.Broadcast();
+			}
+
+			// Reset Timer per il lancio
+			bIsGrabbingObject = true;
+			ThrowButtonPressTime = GetWorld()->GetTimeSeconds();
+
+			UE_LOG(LogTemplateCharacter, Log, TEXT("Grabbed object: %s"), *GrabbableItem->GetName());
 		}
-
-		// 2. Prendi il NUOVO oggetto
-		// Nota: Usiamo GrabbableItem (l'attore) e HitComponent (il componente colpito)
-
-		// Prima assicurati che le collisioni siano attive per il grab, poi disabilita quelle col pawn
-		HitComponent->SetSimulatePhysics(true);
-		HitComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-
-		// GRAB!
-		PhysicsHandle->GrabComponentAtLocationWithRotation(
-			HitComponent,
-			NAME_None,
-			HitComponent->GetComponentLocation(), // Snap al centro
-			HitComponent->GetComponentRotation()
-		);
-
-		// 3. Setup Variabili del Nuovo Oggetto
-		SetItemCollision(HitComponent, true); // Diventa "Fantasma" per evitare compenetrazioni
-
-		// Aggiungi all'inventario (senza nasconderlo, perché lo teniamo in mano)
-		if (!Inventory.Contains(GrabbableItem))
-		{
-			Inventory.AddUnique(GrabbableItem);
-			if (OnInventoryUpdated.IsBound()) OnInventoryUpdated.Broadcast();
-		}
-
-		// Reset Timer per il lancio
-		ThrowButtonPressTime = GetWorld()->GetTimeSeconds();
-
-		UE_LOG(LogTemplateCharacter, Log, TEXT("Grabbed New Object: %s"), *GrabbableItem->GetName());
 	}
 }
 void AhouseCharacter::OnThrowInputStarted()
@@ -427,56 +460,72 @@ void AhouseCharacter::AddToInventory(AActor* NewItem)
 }
 void AhouseCharacter::EquipItemAtIndex(int32 Index)
 {
-
+	// 1. VALIDAZIONE INDICE
 	if (!Inventory.IsValidIndex(Index))
 	{
-		UE_LOG(LogTemplateCharacter, Warning, TEXT("Slot %d is empty!"), Index + 1);
+		UE_LOG(LogTemplateCharacter, Warning, TEXT("Slot %d is empty or invalid!"), Index + 1);
 		return;
 	}
 
-	AActor* NewItem = Inventory[Index];
+	// Castiamo subito a GrabbableActor per accedere a HoldRotationOffset
+	AGrabbableActor* NewItem = Cast<AGrabbableActor>(Inventory[Index]);
 	if (!NewItem) return;
 
+	// OTTIMIZZAZIONE: Se stiamo già tenendo QUESTO oggetto, non fare nulla.
 	if (PhysicsHandle->GetGrabbedComponent() && PhysicsHandle->GetGrabbedComponent()->GetOwner() == NewItem)
 	{
-		return; 
+		return;
 	}
 
-	
+	// 2. METTI VIA L'OGGETTO CORRENTE (Se ne hai uno)
 	if (PhysicsHandle->GetGrabbedComponent())
 	{
 		UPrimitiveComponent* OldComp = PhysicsHandle->GetGrabbedComponent();
 		AActor* OldActor = OldComp->GetOwner();
 
+		// Sgancia
 		PhysicsHandle->ReleaseComponent();
 
+		// Logica "Metti in tasca" manuale
 		OldActor->SetActorHiddenInGame(true);
 		OldActor->SetActorEnableCollision(false);
 		OldComp->SetSimulatePhysics(false);
+
+		// Ripristina collisioni standard sull'oggetto messo via (così se lo lanci dopo è a posto)
+		SetItemCollision(OldComp, false);
 	}
 
-
+	// 3. ESTRAI IL NUOVO OGGETTO
 	NewItem->SetActorHiddenInGame(false);
 	NewItem->SetActorEnableCollision(true);
 
 	UPrimitiveComponent* NewComp = Cast<UPrimitiveComponent>(NewItem->GetRootComponent());
 	if (NewComp)
 	{
-		
+		// TELETRASPORTO: Spostalo davanti alla faccia PRIMA di attivare la fisica
 		FVector StartLoc = FollowCamera->GetComponentLocation() + (FollowCamera->GetForwardVector() * 100.f);
 		NewItem->SetActorLocation(StartLoc);
 
+		// Attiva fisica
 		NewComp->SetSimulatePhysics(true);
+
+		// Setup collisioni "Fantasma" e ignora Pawn
 		SetItemCollision(NewComp, true);
 		NewComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
+		// --- CALCOLO ROTAZIONE ---
+		// Stessa logica del Grab: Camera + Offset Oggetto
+		FRotator TargetRotation = FollowCamera->GetComponentRotation() + NewItem->HoldRotationOffset;
+
+		// AFFERRALO
 		PhysicsHandle->GrabComponentAtLocationWithRotation(
 			NewComp,
 			NAME_None,
-			NewComp->GetComponentLocation(),
-			NewItem->GetActorRotation()
+			NewComp->GetComponentLocation(), // Snap al Centro
+			TargetRotation                   // Rotazione allineata
 		);
 
+		// Reset variabili di stato
 		bIsGrabbingObject = true;
 		ThrowButtonPressTime = GetWorld()->GetTimeSeconds();
 

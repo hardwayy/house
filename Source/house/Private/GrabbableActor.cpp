@@ -3,19 +3,26 @@
 #include "houseCharacter.h"
 AGrabbableActor::AGrabbableActor()
 {
-	PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = false;
 
-	BaseMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BaseMesh"));
-	RootComponent = BaseMesh;
+    // 1. Crea la Root invisibile
+    DefaultSceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("DefaultSceneRoot"));
+    RootComponent = DefaultSceneRoot;
 
-	
-	BaseMesh->SetSimulatePhysics(true); 
-	BaseMesh->SetMassOverrideInKg(NAME_None, 10.f, true); 
-	BaseMesh->SetCollisionProfileName(TEXT("PhysicsActor")); 
-	BaseMesh->ComponentTags.Add(FName("CanGrab"));
-	BaseMesh->BodyInstance.bUseCCD = true;
-	BaseMesh->SetLinearDamping(0.1f);
-	BaseMesh->SetAngularDamping(0.5f);
+    // 2. Crea la Mesh e attaccala alla Root
+    BaseMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BaseMesh"));
+    BaseMesh->SetupAttachment(DefaultSceneRoot);
+
+    // ... Le tue impostazioni fisiche rimangono sulla BaseMesh ...
+    BaseMesh->SetSimulatePhysics(true);
+    BaseMesh->SetMassOverrideInKg(NAME_None, 10.f, true);
+    BaseMesh->SetCollisionProfileName(TEXT("PhysicsActor"));
+    BaseMesh->BodyInstance.bUseCCD = true;
+    BaseMesh->SetLinearDamping(0.1f);
+    BaseMesh->SetAngularDamping(0.5f);
+
+    // I tag vanno sulla mesh perché è quella che colpiamo col raggio
+    BaseMesh->ComponentTags.Add(FName("CanGrab"));
 }
 
 void AGrabbableActor::Interact_Implementation(AActor* InstigatorActor)

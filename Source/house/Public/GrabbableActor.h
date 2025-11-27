@@ -16,7 +16,10 @@ public:
 	AGrabbableActor();
 
 protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Components")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	class USceneComponent* DefaultSceneRoot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class UStaticMeshComponent* BaseMesh;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item Data")
@@ -26,6 +29,9 @@ protected:
 
 public:
 	virtual void Interact_Implementation(AActor* InstigatorActor) override;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item Data")
+	FRotator HoldRotationOffset;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Item Data")
 	FName ItemName;
