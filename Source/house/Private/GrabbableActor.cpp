@@ -31,7 +31,6 @@ void AGrabbableActor::Interact_Implementation(AActor* InstigatorActor)
 }
 void AGrabbableActor::OnUse_Implementation(AActor* User)
 {
-	// Logica di default (es. se è un sasso, non fa nulla).
-	// Puoi mettere un log per debug.
+
 	UE_LOG(LogTemp, Log, TEXT("OnUse called on %s (Default Implementation)"), *GetName());
 }
