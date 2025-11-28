@@ -275,8 +275,9 @@ void AhouseCharacter::OnGrabInput()
 
 	FCollisionQueryParams Params;
 	Params.AddIgnoredActor(this);
-	AActor* OldActor = nullptr;
 
+	// Ignora l'oggetto attualmente tenuto (se esiste)
+	AActor* OldActor = nullptr;
 	if (PhysicsHandle && PhysicsHandle->GetGrabbedComponent())
 	{
 		OldActor = PhysicsHandle->GetGrabbedComponent()->GetOwner();
@@ -285,51 +286,63 @@ void AhouseCharacter::OnGrabInput()
 
 	if (GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, Params))
 	{
-		AGrabbableActor* GrabbableItem = Cast<AGrabbableActor>(HitResult.GetActor());
-		if (!GrabbableItem) return;
+		// 1. Validazione Actor Tipizzato
+		AGrabbableActor* HitGrabbable = Cast<AGrabbableActor>(HitResult.GetActor());
+		if (!HitGrabbable) return;
 
-		UPrimitiveComponent* HitComponent = HitResult.GetComponent();
+		// 2. Otteniamo la Mesh (che è figlia della Root) usando il nuovo getter
+		UPrimitiveComponent* HitComponent = HitGrabbable->GetMesh();
 
-		if (HitComponent && HitComponent->IsSimulatingPhysics())
+		// Verifica che la mesh esista e che sia quella colpita (o parte dell'actor colpito)
+		if (HitComponent && (HitResult.GetComponent() == HitComponent))
 		{
+			// Se la mesh non sta simulando, attiviamola ora per permettere il grab fisico
+			if (!HitComponent->IsSimulatingPhysics())
+			{
+				HitComponent->SetSimulatePhysics(true);
+			}
+
 			// --- SWAP LOGIC ---
 			if (OldActor)
 			{
 				PhysicsHandle->ReleaseComponent();
-				AddToInventory(OldActor);
+				AddToInventory(OldActor); // Assumiamo che AddToInventory gestisca lo spegnimento della fisica
 			}
 
 			// CACHE POINTER
-			CurrentHeldObject = GrabbableItem;
+			CurrentHeldObject = HitGrabbable;
+			bIsGrabbingObject = true;
 
+			// --- CALCOLO ROTAZIONE ---
 			FQuat CameraQuat = FollowCamera->GetComponentRotation().Quaternion();
-			FQuat OffsetQuat = GrabbableItem->HoldRotationOffset.Quaternion();
+			// Usiamo l'offset definito nell'Actor
+			FQuat OffsetQuat = HitGrabbable->HoldRotationOffset.Quaternion();
 			FRotator TargetRotation = (CameraQuat * OffsetQuat).Rotator();
 
+			// Ruotiamo la MESH, non l'Actor (perché è la mesh che simula la fisica)
 			HitComponent->SetWorldRotation(TargetRotation, false, nullptr, ETeleportType::TeleportPhysics);
 
-			
+			// --- GRAB ---
 			PhysicsHandle->GrabComponentAtLocationWithRotation(
 				HitComponent,
 				NAME_None,
-				HitComponent->GetComponentLocation(), 
+				HitComponent->GetComponentLocation(), // Prendi la mesh dove si trova
 				TargetRotation
 			);
 
-			// Setup collisioni
+			// --- SETUP COLLISIONI ---
 			SetItemCollision(HitComponent, true);
 			HitComponent->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
-			if (!Inventory.Contains(GrabbableItem))
+			// Aggiunta inventario
+			if (!Inventory.Contains(HitGrabbable))
 			{
-				Inventory.AddUnique(GrabbableItem);
+				Inventory.AddUnique(HitGrabbable);
 				if (OnInventoryUpdated.IsBound()) OnInventoryUpdated.Broadcast();
 			}
 
-			bIsGrabbingObject = true;
 			ThrowButtonPressTime = GetWorld()->GetTimeSeconds();
-
-			UE_LOG(LogTemplateCharacter, Log, TEXT("Grabbed object with FIXED rotation: %s"), *GrabbableItem->GetName());
+			UE_LOG(LogTemplateCharacter, Log, TEXT("Grabbed object mesh: %s"), *HitComponent->GetName());
 		}
 	}
 }
@@ -452,31 +465,35 @@ void AhouseCharacter::EquipItemAtIndex(int32 Index)
 		return;
 	}
 
-	// Castiamo subito a GrabbableActor per accedere a HoldRotationOffset
 	AGrabbableActor* NewItem = Cast<AGrabbableActor>(Inventory[Index]);
 	if (!NewItem) return;
 
-	// OTTIMIZZAZIONE: Se stiamo già tenendo QUESTO oggetto, non fare nulla.
+	// OTTIMIZZAZIONE: Se stiamo già tenendo QUESTO oggetto (controllando il proprietario della mesh presa)
 	if (PhysicsHandle->GetGrabbedComponent() && PhysicsHandle->GetGrabbedComponent()->GetOwner() == NewItem)
 	{
 		return;
 	}
 
-	// 2. METTI VIA L'OGGETTO CORRENTE (Se ne hai uno)
+	// 2. METTI VIA L'OGGETTO CORRENTE
 	if (PhysicsHandle->GetGrabbedComponent())
 	{
 		UPrimitiveComponent* OldComp = PhysicsHandle->GetGrabbedComponent();
 		AActor* OldActor = OldComp->GetOwner();
 
-		// Sgancia
 		PhysicsHandle->ReleaseComponent();
 
-		// Logica "Metti in tasca" manuale
+		// Logica "Metti in tasca"
 		OldActor->SetActorHiddenInGame(true);
 		OldActor->SetActorEnableCollision(false);
+
+		// Spegni la fisica sulla mesh
 		OldComp->SetSimulatePhysics(false);
 
-		// Ripristina collisioni standard sull'oggetto messo via (così se lo lanci dopo è a posto)
+		// RESETTA LA MESH ALLA POSIZIONE DELLA ROOT
+		// Questo è vitale: quando rimetti via l'oggetto, riallinea la mesh alla SceneRoot
+		// così la prossima volta che sposti l'Actor, la mesh è nel posto giusto.
+		OldComp->AttachToComponent(OldActor->GetRootComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+
 		SetItemCollision(OldComp, false);
 	}
 
@@ -484,39 +501,43 @@ void AhouseCharacter::EquipItemAtIndex(int32 Index)
 	NewItem->SetActorHiddenInGame(false);
 	NewItem->SetActorEnableCollision(true);
 
-	UPrimitiveComponent* NewComp = Cast<UPrimitiveComponent>(NewItem->GetRootComponent());
-	if (NewComp)
-	{
-		// Posizioniamo l'oggetto davanti alla camera
-		FVector StartLoc = FollowCamera->GetComponentLocation() + (FollowCamera->GetForwardVector() * HoldOffset.X); // Usa HoldOffset.X se vuoi la distanza giusta
+	// Otteniamo la Mesh (NON la RootComponent, che è la SceneRoot)
+	UStaticMeshComponent* NewMesh = NewItem->GetMesh();
 
-		// Calcolo rotazione fissa
+	if (NewMesh)
+	{
+		// A. Posizioniamo l'ACTOR (SceneRoot) davanti alla camera
+		FVector StartLoc = FollowCamera->GetComponentLocation() + (FollowCamera->GetForwardVector() * HoldOffset.X);
+
 		FQuat CameraQuat = FollowCamera->GetComponentRotation().Quaternion();
 		FQuat OffsetQuat = NewItem->HoldRotationOffset.Quaternion();
 		FRotator TargetRotation = (CameraQuat * OffsetQuat).Rotator();
 
-		// 1. SET POSITION & ROTATION PRIMA DI ATTIVARE LA FISICA
+		// Spostiamo l'Actor intero (la mesh seguirà perché è attaccata e non simula ancora)
 		NewItem->SetActorLocationAndRotation(StartLoc, TargetRotation, false, nullptr, ETeleportType::TeleportPhysics);
 
-		// 2. Attiva fisica
-		NewComp->SetSimulatePhysics(true);
+		// B. Assicuriamoci che la Mesh sia resettata localmente (0,0,0 rispetto alla root)
+		NewMesh->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
 
-		SetItemCollision(NewComp, true);
-		NewComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		// C. Attiva fisica sulla MESH
+		NewMesh->SetSimulatePhysics(true);
+		SetItemCollision(NewMesh, true);
+		NewMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
-		// 3. GRAB (Ora l'oggetto è già allineato perfettamente)
+		// D. GRAB sulla MESH
 		PhysicsHandle->GrabComponentAtLocationWithRotation(
-			NewComp,
+			NewMesh,
 			NAME_None,
-			NewComp->GetComponentLocation(), // Presa al centro/pivot
+			NewMesh->GetComponentLocation(), // Ora coincide con la root perché l'abbiamo resettata
 			TargetRotation
 		);
 
-		// Reset variabili di stato
+		// Reset variabili stato
+		CurrentHeldObject = NewItem; // Aggiorna il puntatore all'oggetto corrente
 		bIsGrabbingObject = true;
 		ThrowButtonPressTime = GetWorld()->GetTimeSeconds();
 
-		UE_LOG(LogTemplateCharacter, Log, TEXT("Equipped Item from Slot %d: %s"), Index + 1, *NewItem->GetName());
+		UE_LOG(LogTemplateCharacter, Log, TEXT("Equipped Item Mesh from Slot %d: %s"), Index + 1, *NewItem->GetName());
 	}
 }
 void AhouseCharacter::SetItemCollision(UPrimitiveComponent* Item, bool bIsHeld)

@@ -39,4 +39,7 @@ public:
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Interaction")
 	void OnUse(AActor* User);
 
+	UFUNCTION(BlueprintCallable, Category = "Grabbable")
+	UStaticMeshComponent* GetMesh() const { return BaseMesh; }
+
 };

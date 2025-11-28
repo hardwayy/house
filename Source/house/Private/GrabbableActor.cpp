@@ -3,17 +3,16 @@
 #include "houseCharacter.h"
 AGrabbableActor::AGrabbableActor()
 {
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
 
     // 1. Crea la Root invisibile
     DefaultSceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("DefaultSceneRoot"));
-    RootComponent = DefaultSceneRoot;
-
+    RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
     // 2. Crea la Mesh e attaccala alla Root
     BaseMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BaseMesh"));
-    BaseMesh->SetupAttachment(DefaultSceneRoot);
+    BaseMesh->SetupAttachment(RootComponent);
 
-    // ... Le tue impostazioni fisiche rimangono sulla BaseMesh ...
+    
     BaseMesh->SetSimulatePhysics(true);
     BaseMesh->SetMassOverrideInKg(NAME_None, 10.f, true);
     BaseMesh->SetCollisionProfileName(TEXT("PhysicsActor"));
