@@ -42,4 +42,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Grabbable")
 	UStaticMeshComponent* GetMesh() const { return BaseMesh; }
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Physics")
+	float CachedMass = 0.0f;
+
 };

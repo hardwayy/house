@@ -54,6 +54,10 @@ AhouseCharacter::AhouseCharacter()
 
 	PhysicsHandle->AngularDamping = 100.f;
 	PhysicsHandle->AngularStiffness = 15000.f;
+
+	CurrentStamina = MaxStamina;
+	bIsSprinting = false;
+	WalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
 }
 void AhouseCharacter::BeginPlay()
 {
@@ -155,6 +159,8 @@ void AhouseCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		EnhancedInputComponent->BindAction(Slot3Action, ETriggerEvent::Started, this, &AhouseCharacter::OnSelectSlot3);
 		EnhancedInputComponent->BindAction(Slot4Action, ETriggerEvent::Started, this, &AhouseCharacter::OnSelectSlot4);
 		EnhancedInputComponent->BindAction(UseItemAction, ETriggerEvent::Started, this, &AhouseCharacter::OnUseItemInput);
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &AhouseCharacter::StartSprint);
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &AhouseCharacter::StopSprint);
 	}
 	else
 	{
@@ -297,6 +303,19 @@ void AhouseCharacter::OnGrabInput()
 		if (HitComponent && (HitResult.GetComponent() == HitComponent))
 		{
 			// Se la mesh non sta simulando, attiviamola ora per permettere il grab fisico
+
+			float RealMass = HitComponent->GetMass();
+
+			if (RealMass > 0.0f)
+			{
+				HitGrabbable->CachedMass = RealMass;
+			}
+			else
+			{
+				// Fallback se per caso la fisica non era pronta
+				HitGrabbable->CachedMass = 1.0f;
+			}
+
 			if (!HitComponent->IsSimulatingPhysics())
 			{
 				HitComponent->SetSimulatePhysics(true);
@@ -581,4 +600,124 @@ void AhouseCharacter::OnUseItemInput()
 	{
 		UE_LOG(LogTemplateCharacter, Warning, TEXT("Cannot use item: Hand is empty."));
 	}
+}
+void AhouseCharacter::StartSprint()
+{
+	if (CurrentStamina <= 0.f) return;
+
+	GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
+	bIsSprinting = true;
+
+	GetWorldTimerManager().ClearTimer(StaminaTimerHandle);
+
+	GetWorldTimerManager().SetTimer(StaminaTimerHandle, this, &AhouseCharacter::HandleStaminaUpdate, 0.05f, true);
+}
+
+void AhouseCharacter::StopSprint()
+{
+
+	GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+	bIsSprinting = false;
+
+	GetWorldTimerManager().ClearTimer(StaminaTimerHandle);
+
+	if (CurrentStamina < MaxStamina)
+	{
+		GetWorldTimerManager().SetTimer(StaminaTimerHandle, this, &AhouseCharacter::HandleStaminaUpdate, 0.05f, true, StaminaRegenDelay);
+	}
+}
+void AhouseCharacter::HandleStaminaUpdate()
+{
+	bool bIsMoving = GetVelocity().SizeSquared() > 1.0f;
+	bool bStaminaChanged = false;
+
+	// --- FASE DI CONSUMO ---
+	if (bIsSprinting)
+	{
+		if (bIsMoving)
+		{
+			// 1. Calcoliamo il peso attuale
+			float CurrentLoad = CalculateTotalMass();
+
+			// 2. Controllo se sono troppo pesante per correre
+			if (CurrentLoad > MaxSprintWeight)
+			{
+				StopSprint(); // Troppo pesante! Torna a camminare
+				return;
+			}
+
+			// 3. Calcolo il consumo dinamico
+			// Formula: Base + (Chili * CostoPerChilo)
+			// Es: 10 base + (15kg * 2) = 40 drain/sec invece di 10.
+			float DynamicDrainRate = StaminaDrainRate + (CurrentLoad * StaminaDrainPerKg);
+
+			float DeltaTime = 0.05f;
+			CurrentStamina -= DynamicDrainRate * DeltaTime;
+
+			bStaminaChanged = true;
+
+			if (CurrentStamina <= 0.f)
+			{
+				CurrentStamina = 0.f;
+				StopSprint();
+			}
+
+			// DEBUG LOG (Opzionale: togliere dopo i test)
+			// UE_LOG(LogTemplateCharacter, VeryVerbose, TEXT("Stamina Drain: %f (Load: %f kg)"), DynamicDrainRate, CurrentLoad);
+		}
+	}
+	// --- FASE DI RIGENERAZIONE ---
+	else
+	{
+		// ... (Il codice di rigenerazione rimane identico a prima) ...
+		float DeltaTime = 0.05f;
+		CurrentStamina += StaminaRegenRate * DeltaTime;
+		bStaminaChanged = true;
+
+		if (CurrentStamina >= MaxStamina)
+		{
+			CurrentStamina = MaxStamina;
+			GetWorldTimerManager().ClearTimer(StaminaTimerHandle);
+		}
+	}
+
+	// --- AGGIORNAMENTO UI ---
+	if (bStaminaChanged && OnStaminaChanged.IsBound())
+	{
+		OnStaminaChanged.Broadcast(GetStaminaPercent());
+	}
+}
+float AhouseCharacter::CalculateTotalMass() const
+{
+	float TotalMass = 0.f;
+
+	for (AActor* Item : Inventory)
+	{
+		if (!Item) continue;
+
+		// 1. Se è un nostro oggetto Grabbable, usiamo il valore CACHED (Velocissimo!)
+		if (AGrabbableActor* GrabbableItem = Cast<AGrabbableActor>(Item))
+		{
+			TotalMass += GrabbableItem->CachedMass;
+			UE_LOG(LogTemplateCharacter, VeryVerbose, TEXT("Adding Cached Mass of %s: %f kg"), *Item->GetName(), GrabbableItem->CachedMass);
+		}
+		// 2. Fallback per altri oggetti (solo se necessari)
+		else if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Item->GetRootComponent()))
+		{
+			// Controllo extra per evitare warning su oggetti spenti
+			if (PrimComp->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
+			{
+				TotalMass += PrimComp->GetMass();
+			}
+		}
+	}
+
+	// Aggiungi anche l'oggetto che hai in mano (se non è già nell'inventario)
+	if (PhysicsHandle && PhysicsHandle->GetGrabbedComponent())
+	{
+		// Nota: Qui puoi usare GetMass() perché l'oggetto in mano ha SICURAMENTE la fisica attiva
+		TotalMass += PhysicsHandle->GetGrabbedComponent()->GetMass();
+	}
+
+	return TotalMass;
 }

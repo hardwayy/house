@@ -7,13 +7,15 @@
 #include "Logging/LogMacros.h"
 #include "houseCharacter.generated.h"
 
+
+
 class USpringArmComponent;
 class UCameraComponent;
 class UInputAction;
 struct FInputActionValue;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStaminaChanged, float, StaminaPercent);
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
-
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnInventoryUpdated);
 UCLASS(abstract)
 class AhouseCharacter : public ACharacter
@@ -59,6 +61,10 @@ protected:
 	/* Throw Input Action */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
 	class UInputAction* ThrowAction;
+
+	/*Sprint Input Action*/
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+	UInputAction* SprintAction;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interaction|Throwing")
     float CurrentPullBack;
@@ -113,6 +119,45 @@ protected:
 	// La logica vera e propria
 	void EquipItemAtIndex(int32 Index);
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Stamina")
+	float MaxStamina = 100.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Stamina")
+	float StaminaDrainRate = 10.f; // Stamina persa al secondo
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Stamina")
+	float StaminaRegenRate = 5.f; // Stamina guadagnata al secondo
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Stamina")
+	float SprintSpeed = 1000.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Stamina")
+	float WalkSpeed = 500.f; // Deve corrispondere al default nel costruttore
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Stamina")
+	float StaminaRegenDelay = 1.0f; // Tempo di attesa prima che la stamina inizi a rigenerarsi
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Stamina")
+	float CurrentStamina;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Stamina|Load")
+	float StaminaDrainPerKg = 2.0f;
+
+	// Peso massimo oltre il quale non è possibile scattare (Opzionale, ma consigliato per evitare bug visivi)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement|Stamina|Load")
+	float MaxSprintWeight = 50.0f;
+
+	// Helper per calcolare la massa totale (Inventario + Oggetto in mano)
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	float CalculateTotalMass() const;
+
+
+	bool bIsSprinting;
+
+	FTimerHandle StaminaTimerHandle;
+	void HandleStaminaUpdate();
+	void StartSprint();
+	void StopSprint();
 
 public:
 
@@ -120,6 +165,14 @@ public:
 	AhouseCharacter();	
 	// Override Tick function (needed to update the physics handle position)
 	virtual void Tick(float DeltaTime) override;
+
+	// Evento a cui il Widget si iscriverà per sapere quando aggiornare la barra
+	UPROPERTY(BlueprintAssignable, Category = "Events")
+	FOnStaminaChanged OnStaminaChanged;
+
+	// Helper per ottenere la percentuale attuale (utile per l'inizializzazione del Widget)
+	UFUNCTION(BlueprintPure, Category = "Movement|Stamina")
+	float GetStaminaPercent() const { return (MaxStamina > 0.f) ? CurrentStamina / MaxStamina : 0.f; }
 
 private:
 	UPROPERTY()
