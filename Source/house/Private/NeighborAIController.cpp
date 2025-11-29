@@ -44,10 +44,28 @@ void ANeighborAIController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 
-	// 1. Avviamo il Behavior Tree e inizializziamo la Blackboard
+	UE_LOG(LogTemp, Warning, TEXT("AI CONTROLLER: Preso possesso di %s"), *InPawn->GetName());
+
+	// Controllo 1: La variabile è assegnata?
 	if (BehaviorTreeAsset)
 	{
-		RunBehaviorTree(BehaviorTreeAsset);
+		UE_LOG(LogTemp, Warning, TEXT("AI CONTROLLER: Behavior Tree trovato! Provo ad avviarlo..."));
+
+		// Controllo 2: L'avvio ha successo?
+		bool bSuccess = RunBehaviorTree(BehaviorTreeAsset);
+
+		if (bSuccess)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("AI CONTROLLER: Behavior Tree avviato con SUCCESSO!"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("AI CONTROLLER ERRORE: RunBehaviorTree ha restituito FALSE! Il Behavior Tree ha una Blackboard assegnata?"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("AI CONTROLLER ERRORE: BehaviorTreeAsset è NULL! Hai assegnato il BT nel Blueprint del Controller?"));
 	}
 }
 
@@ -64,7 +82,7 @@ void ANeighborAIController::OnTargetDetected(AActor* Actor, FAIStimulus Stimulus
 
 		if (BlackboardComp && Stimulus.WasSuccessfullySensed())
 		{
-			
+			BlackboardComp->SetValueAsEnum(TEXT("CurrentState"), (uint8)ENeighborState::Chase);
 			BlackboardComp->SetValueAsObject(TEXT("TargetActor"), Actor);
 			BlackboardComp->SetValueAsVector(TEXT("LastKnownLocation"), Stimulus.StimulusLocation);
 
@@ -75,7 +93,10 @@ void ANeighborAIController::OnTargetDetected(AActor* Actor, FAIStimulus Stimulus
 
 			BlackboardComp->SetValueAsVector(TEXT("LastKnownLocation"), Stimulus.StimulusLocation);
 
-			UE_LOG(LogTemp, Log, TEXT("PERSO DI VISTA. Vado all'ultima posizione nota."));
+			// 2. Cancelliamo il bersaglio diretto (così smette di "barare" inseguendo attraverso i muri)
+			BlackboardComp->ClearValue(TEXT("TargetActor"));
+
+			UE_LOG(LogTemp, Log, TEXT("PERSO! Vado a investigare l'ultima posizione."));
 		}
 	}
 }

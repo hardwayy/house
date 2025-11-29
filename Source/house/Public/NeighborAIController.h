@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "AIController.h"
 #include "Perception/AIPerceptionTypes.h" // FIX 1: Necessario per FAIStimulus
+#include "NeighborTypes.h"
 #include "NeighborAIController.generated.h"
 
 // FIX 2: Forward Declarations. Diciamo al compilatore "Queste classi esistono, fidati".

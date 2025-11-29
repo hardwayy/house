@@ -2,7 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "NeighborTypes.h"
 #include "NeighborCharacter.generated.h"
+
+// Forward Declaration (dice al compilatore che questa classe esiste)
+class UTextRenderComponent;
 
 UCLASS()
 class HOUSE_API ANeighborCharacter : public ACharacter
@@ -18,7 +22,14 @@ protected:
 public:
 	virtual void Tick(float DeltaTime) override;
 
-	// Utile per debuggare o per logica specifica (es. "Ti ho preso!")
-	UFUNCTION(BlueprintCallable, Category = "Neighbor AI")
+	// Funzione chiamata dal Task per catturare il giocatore
 	void CatchPlayer();
+
+	// Componente per il testo sopra la testa (Dichiarazione fondamentale!)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Debug")
+	UTextRenderComponent* DebugStateText;
+
+private:
+	// Funzione interna per aggiornare il testo
+	void UpdateDebugText();
 };
