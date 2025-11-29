@@ -4,6 +4,7 @@
 #include "AIController.h"
 #include "Perception/AIPerceptionTypes.h" // FIX 1: Necessario per FAIStimulus
 #include "NeighborTypes.h"
+#include "BehaviorTree/BlackboardComponent.h"
 #include "NeighborAIController.generated.h"
 
 // FIX 2: Forward Declarations. Diciamo al compilatore "Queste classi esistono, fidati".
@@ -22,8 +23,10 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
-	// Se la dichiariamo qui, dobbiamo implementarla nel .cpp!
+	
 	virtual void OnPossess(APawn* InPawn) override;
+
+	EBlackboardNotificationResult OnBlackboardStateChanged(const UBlackboardComponent& InBlackboard, FBlackboard::FKey ChangedKeyID);
 
 	UFUNCTION()
 	void OnTargetDetected(AActor* Actor, FAIStimulus Stimulus);
@@ -40,4 +43,7 @@ private:
 
 	// La configurazione specifica per la VISTA
 	UAISenseConfig_Sight* SightConfig;
+
+	FBlackboard::FKey CurrentStateKeyID;
+	FDelegateHandle BlackboardDelegateHandle;
 };

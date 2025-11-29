@@ -2,6 +2,7 @@
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "GameFramework/Character.h"
+#include "NeighborCharacter.h" 
 #include "BehaviorTree/BehaviorTree.h" 
 #include "BehaviorTree/BlackboardComponent.h" 
 #include <Kismet/GameplayStatics.h>
@@ -68,7 +69,25 @@ void ANeighborAIController::OnPossess(APawn* InPawn)
 		UE_LOG(LogTemp, Error, TEXT("AI CONTROLLER ERRORE: BehaviorTreeAsset è NULL! Hai assegnato il BT nel Blueprint del Controller?"));
 	}
 }
+EBlackboardNotificationResult ANeighborAIController::OnBlackboardStateChanged(const UBlackboardComponent& InBlackboard, FBlackboard::FKey ChangedKeyID)
+{
+	if (ChangedKeyID == CurrentStateKeyID)
+	{
+		// 1. Recuperiamo il valore dalla Blackboard
+		FName KeyName = InBlackboard.GetKeyName(ChangedKeyID);
+		uint8 EnumValue = InBlackboard.GetValueAsEnum(KeyName);
 
+		// 2. Chiamiamo l'evento BLUEPRINT sul Character
+		if (ANeighborCharacter* MyNeighbor = Cast<ANeighborCharacter>(GetPawn()))
+		{
+			MyNeighbor->OnAIStateChanged(static_cast<E_NeighborState>(EnumValue));
+		}
+
+		return EBlackboardNotificationResult::ContinueObserving;
+	}
+
+	return EBlackboardNotificationResult::ContinueObserving;
+}
 void ANeighborAIController::OnTargetDetected(AActor* Actor, FAIStimulus Stimulus)
 {
 	// Recuperiamo il personaggio controllato dal giocatore
