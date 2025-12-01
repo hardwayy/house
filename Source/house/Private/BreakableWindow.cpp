@@ -102,10 +102,14 @@ void ABreakableWindow::OnImpact_Implementation(float ImpactForce, const FHitResu
 
 	// Rimuoviamo il delegate Hit per risparmiare performance (i frammenti a terra non devono richiamare questa logica)
 	ShatteredMesh->OnComponentHit.RemoveDynamic(this, &ABreakableWindow::OnHit);
+
+	BreakWindow(HitResult.ImpactPoint);
+	UE_LOG(LogTemp, Log, TEXT("WINDOW BROKEN!"));
 }
 
 void ABreakableWindow::OnUnsuccesfulImpact_Implementation(float ImpactForce, const FHitResult& HitResult, AActor* InstigatorActor)
 {
 	UE_LOG(LogTemp, Warning, TEXT("Impact too weak: %f / %f"), ImpactForce, BreakThreshold);
-	// Qui potresti mettere un suono di "tump" o un effetto particellare di polvere
+	TouchWindow(HitResult.ImpactPoint);
+	UE_LOG(LogTemp, Log, TEXT("WINDOW TOUCHED!"));
 }

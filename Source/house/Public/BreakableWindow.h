@@ -33,6 +33,11 @@ public:
 	UFUNCTION()
 	void OnHit(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
 
+	UFUNCTION(BlueprintImplementableEvent, Category = "Impact")
+	void BreakWindow(const FVector& HitLocation);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "Impact")
+	void TouchWindow(const FVector& HitLocation);
 	// Implementazione Interfaccia
 	virtual void OnImpact_Implementation(float ImpactForce, const FHitResult& HitResult, AActor* InstigatorActor) override;
 	virtual void OnUnsuccesfulImpact_Implementation(float ImpactForce, const FHitResult& HitResult, AActor* InstigatorActor) override;
