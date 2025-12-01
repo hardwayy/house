@@ -1,115 +1,137 @@
-#include "BreakableWindow.h"
-#include "Components/PrimitiveComponent.h"
-#include "GeometryCollection/GeometryCollectionComponent.h"
-#include "Physics/Experimental/ChaosInterfaceUtils.h"
-#include "DrawDebugHelpers.h"
+	#include "BreakableWindow.h"
+	#include "Components/StaticMeshComponent.h"
+	#include "GeometryCollection/GeometryCollectionComponent.h"
+	#include "GameFramework/Character.h" 
+	#include "Field/FieldSystemTypes.h" // Necessario per applicare Strain precisi
 
-ABreakableWindow::ABreakableWindow()
-{
-	PrimaryActorTick.bCanEverTick = false;
-
-	RootScene = CreateDefaultSubobject<USceneComponent>(TEXT("RootScene"));
-	RootComponent = RootScene;
-
-	// 1. Creiamo direttamente la Geometry Collection come protagonista
-	ShatteredMesh = CreateDefaultSubobject<UGeometryCollectionComponent>(TEXT("ShatteredMesh"));
-	ShatteredMesh->SetupAttachment(RootComponent);
-
-	// 2. CONFIGURAZIONE INIZIALE: "SOLIDO E FERMO"
-	// BlockAllDynamic permette di bloccare oggetti e ricevere l'evento Hit
-	ShatteredMesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
-	ShatteredMesh->SetNotifyRigidBodyCollision(true); // Fondamentale per ricevere OnHit
-	ShatteredMesh->SetGenerateOverlapEvents(true);
-
-	// IMPORTANTE: Disabilitando la fisica all'inizio, la GC agisce come un oggetto Statico (Kinematic).
-	// Non cadrà e non si romperà finché non lo diciamo noi.
-	ShatteredMesh->SetSimulatePhysics(false);
-
-	// Visibile da subito
-	ShatteredMesh->SetVisibility(true);
-
-	// Override Massa (opzionale ma consigliato per vetri leggeri)
-	if (ShatteredMesh)
+	ABreakableWindow::ABreakableWindow()
 	{
-		ShatteredMesh->SetMassOverrideInKg(NAME_None, 50.0f, true);
+		PrimaryActorTick.bCanEverTick = false;
+
+		RootScene = CreateDefaultSubobject<USceneComponent>(TEXT("RootScene"));
+		RootComponent = RootScene;
+
+		// --- 1. MESH SANA (IL "MURO") ---
+		WindowMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WindowMesh"));
+		WindowMesh->SetupAttachment(RootComponent);
+	
+		// Configurazione Collisioni: Blocca tutto, genera Hit, MA NON SI MUOVE.
+		WindowMesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+		WindowMesh->SetNotifyRigidBodyCollision(true); 
+	
+		// <--- FIX FONDAMENTALE: Mai simulare fisica sulla mesh sana. Deve restare inchiodata.
+		WindowMesh->SetSimulatePhysics(false); 
+		WindowMesh->SetMobility(EComponentMobility::Static); // O Stationary, basta che non sia Movable+Physics
+
+		// --- 2. GEOMETRY COLLECTION (IL "CAOS") ---
+		ShatteredMesh = CreateDefaultSubobject<UGeometryCollectionComponent>(TEXT("ShatteredMesh"));
+		ShatteredMesh->SetupAttachment(RootComponent);
+
+		// Configurazione Iniziale: Invisibile e Spenta
+		ShatteredMesh->SetVisibility(true);
+		ShatteredMesh->SetSimulatePhysics(false);
+		ShatteredMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	
+		// Deve essere Movable per potersi svegliare dopo
+		ShatteredMesh->SetMobility(EComponentMobility::Movable); 
+
+		BreakThreshold = 50.0f; // La soglia del NOSTRO codice (non di Chaos)
 	}
 
-	BreakThreshold = 15000.0f;
-}
-
-void ABreakableWindow::BeginPlay()
-{
-	Super::BeginPlay();
-
-	// 3. Ci iscriviamo all'evento Hit direttamente sulla Geometry Collection
-	if (ShatteredMesh)
+	void ABreakableWindow::BeginPlay()
 	{
-		ShatteredMesh->OnComponentHit.AddDynamic(this, &ABreakableWindow::OnHit);
-	}
-}
-
-void ABreakableWindow::OnHit(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
-{
-	// Se la fisica è già attiva, non serve ricalcolare la rottura (evita spam di eventi sui frammenti a terra)
-	if (ShatteredMesh->IsSimulatingPhysics()) return;
-
-	float ImpactForce = NormalImpulse.Size();
-
-	// Debug visivo del punto d'impatto
-	DrawDebugSphere(GetWorld(), Hit.ImpactPoint, 10.0f, 12, FColor::Red, false, 2.0f);
-	UE_LOG(LogTemp, Log, TEXT("Impact Force Detected: %f"), ImpactForce);
-
-	if (ImpactForce >= BreakThreshold)
-	{
-		if (Implements<UImpactInterface>())
+		Super::BeginPlay();
+	
+		// Forza bruta all'inizio del gioco per assicurarsi che la finestra non cada
+		if(WindowMesh)
 		{
-			IImpactInterface::Execute_OnImpact(this, ImpactForce, Hit, OtherActor);
+			WindowMesh->SetSimulatePhysics(false);
+			WindowMesh->OnComponentHit.AddDynamic(this, &ABreakableWindow::OnHit);
+			UE_LOG(LogTemp, Warning, TEXT("registered hit event!"));
+		}
+		if(ShatteredMesh)
+		{
+			ShatteredMesh->SetVisibility(false);
+			UE_LOG(LogTemp, Warning, TEXT("Shattered mesh hidden at begin play."));
 		}
 	}
-	else
+
+	void ABreakableWindow::OnHit(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit)
 	{
-		if (Implements<UImpactInterface>())
+		// Se la ShatteredMesh è già visibile, vuol dire che siamo già rotti.
+		if (ShatteredMesh->IsVisible()) return;
+
+		// --- RIMOSSO: ShatteredMesh->SetVisibility(true); --- 
+		// NON toccare la visibilità qui! Lo faremo solo se si rompe davvero.
+
+		float ImpactForce = NormalImpulse.Size();
+
+		// Logica Player (Breaching)
+		ACharacter* CharacterRef = Cast<ACharacter>(OtherActor);
+		if (CharacterRef && CharacterRef->GetVelocity().Size() > 400.0f)
 		{
-			IImpactInterface::Execute_OnUnsuccesfulImpact(this, ImpactForce, Hit, OtherActor);
+			ImpactForce = BreakThreshold + 1000.0f;
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("Hit Force: %f"), ImpactForce);
+
+		if (ImpactForce >= BreakThreshold)
+		{
+			if (Implements<UImpactInterface>())
+			{
+				IImpactInterface::Execute_OnImpact(this, ImpactForce, Hit, OtherActor);
+			}
+		}
+		else
+		{
+			if (Implements<UImpactInterface>())
+			{
+				IImpactInterface::Execute_OnUnsuccesfulImpact(this, ImpactForce, Hit, OtherActor);
+			}
 		}
 	}
-}
+	void ABreakableWindow::OnImpact_Implementation(float ImpactForce, const FHitResult& HitResult, AActor* InstigatorActor)
+	{
+		// Doppio controllo di sicurezza
+		if (ShatteredMesh->IsVisible()) return;
 
-void ABreakableWindow::OnImpact_Implementation(float ImpactForce, const FHitResult& HitResult, AActor* InstigatorActor)
-{
-	if (!ShatteredMesh) return;
+		UE_LOG(LogTemp, Warning, TEXT("--- WINDOW SHATTERING ---"));
 
-	UE_LOG(LogTemp, Warning, TEXT("WINDOW BREAKING!"));
+		// 1. SWAP MESH
+		WindowMesh->SetVisibility(false);
+		WindowMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-	// 4. ATTIVAZIONE: SVEGLIA LA GC!
-	// Abilitando la fisica ora, la GC smette di essere "Statica" e risponde alla gravità e agli impulsi.
-	ShatteredMesh->SetSimulatePhysics(true);
+		// 2. PREPARAZIONE CHAOS
+		ShatteredMesh->SetVisibility(true);
+		UE_LOG(LogTemp, Warning, TEXT("--- SHATTER MESH VISIBLE ---"));
 
-	// Cambiamo profilo di collisione se necessario (spesso "Destructible" o lasciamo quello corrente se funziona)
-	ShatteredMesh->SetCollisionProfileName(TEXT("Destructible"));
+		// FIX: Forziamo il Tick del componente anche se l'attore non ticka
+		ShatteredMesh->SetComponentTickEnabled(true);
 
-	// Assicuriamoci che tutti i pezzi siano svegli
-	ShatteredMesh->WakeAllRigidBodies();
+		ShatteredMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		ShatteredMesh->SetCollisionProfileName(TEXT("Destructible"));
 
-	// 5. APPLICAZIONE FORZA
-	// Applichiamo un impulso nel punto esatto in cui l'oggetto ha colpito per spingere i frammenti
-	// Invertiamo la normale per spingere "dentro" la finestra
-	FVector ImpulseDir = HitResult.ImpactNormal * -1.0f;
+		// 3. ATTIVAZIONE FISICA
+		ShatteredMesh->SetSimulatePhysics(true);
 
-	// AddRadialImpulse è ottimo per le GC perché "esplode" la zona colpita
-	// Radius 500.0f assicura che i pezzi vicini vengano spinti via
-	ShatteredMesh->AddRadialImpulse(HitResult.ImpactPoint, 500.0f, ImpactForce * 0.5f, ERadialImpulseFalloff::RIF_Linear, true);
+		// FIX: Forziamo l'aggiornamento delle proprietà fisiche
+		ShatteredMesh->RecreatePhysicsState();
+		ShatteredMesh->WakeAllRigidBodies();
 
-	// Rimuoviamo il delegate Hit per risparmiare performance (i frammenti a terra non devono richiamare questa logica)
-	ShatteredMesh->OnComponentHit.RemoveDynamic(this, &ABreakableWindow::OnHit);
+		// 4. APPLICAZIONE FORZA
+		FVector ImpulseDir = HitResult.ImpactNormal * -1.0f;
 
-	BreakWindow(HitResult.ImpactPoint);
-	UE_LOG(LogTemp, Log, TEXT("WINDOW BROKEN!"));
-}
+		// Impulso Strain (Rottura)
+		ShatteredMesh->AddRadialImpulse(HitResult.ImpactPoint, 100.0f, 2000000.0f, ERadialImpulseFalloff::RIF_Constant, true);
 
-void ABreakableWindow::OnUnsuccesfulImpact_Implementation(float ImpactForce, const FHitResult& HitResult, AActor* InstigatorActor)
-{
-	UE_LOG(LogTemp, Warning, TEXT("Impact too weak: %f / %f"), ImpactForce, BreakThreshold);
-	TouchWindow(HitResult.ImpactPoint);
-	UE_LOG(LogTemp, Log, TEXT("WINDOW TOUCHED!"));
-}
+		// Impulso Spinta
+		ShatteredMesh->AddRadialImpulse(HitResult.ImpactPoint, 500.0f, ImpactForce * 2.0f, ERadialImpulseFalloff::RIF_Linear, true);
+
+		BreakWindow(HitResult.ImpactPoint);
+	}
+	void ABreakableWindow::OnUnsuccesfulImpact_Implementation(float ImpactForce, const FHitResult& HitResult, AActor* InstigatorActor)
+	{
+		// Solo effetti sonori/visivi leggeri
+		TouchWindow(HitResult.ImpactPoint);
+		UE_LOG(LogTemp, Warning, TEXT("Window hit but not shattered. Impact Force: %f"), ImpactForce);
+	}

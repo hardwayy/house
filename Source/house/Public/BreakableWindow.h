@@ -3,41 +3,48 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "GeometryCollection/GeometryCollectionComponent.h"
-#include "ImpactInterface.h" // Assumo tu abbia questa interfaccia
+#include "ImpactInterface.h"
 #include "BreakableWindow.generated.h"
 
 UCLASS()
 class HOUSE_API ABreakableWindow : public AActor, public IImpactInterface
 {
 	GENERATED_BODY()
-	
-public:	
+
+public:
 	ABreakableWindow();
 
 protected:
 	virtual void BeginPlay() override;
 
-public:	
-	// Componente principale: La Geometry Collection
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UGeometryCollectionComponent* ShatteredMesh;
-
+public:
+	// Componente Radice per tenere tutto ordinato
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	USceneComponent* RootScene;
 
-	// Soglia di forza per rompere il vetro
+	// 1. LA MESH SANA (Quella che vediamo all'inizio)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	class UStaticMeshComponent* WindowMesh;
+
+	// 2. LA MESH ROTTA (Nascosta e disabilitata all'inizio)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UGeometryCollectionComponent* ShatteredMesh;
+
+	// Soglia di forza
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Break Settings")
 	float BreakThreshold;
 
-	// Funzione per gestire l'impatto fisico
+	// Funzione per gestire l'impatto fisico (Hit Event sulla Static Mesh)
 	UFUNCTION()
 	void OnHit(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, FVector NormalImpulse, const FHitResult& Hit);
 
+	// Eventi Blueprint per audio/fx
 	UFUNCTION(BlueprintImplementableEvent, Category = "Impact")
 	void BreakWindow(const FVector& HitLocation);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Impact")
 	void TouchWindow(const FVector& HitLocation);
+
 	// Implementazione Interfaccia
 	virtual void OnImpact_Implementation(float ImpactForce, const FHitResult& HitResult, AActor* InstigatorActor) override;
 	virtual void OnUnsuccesfulImpact_Implementation(float ImpactForce, const FHitResult& HitResult, AActor* InstigatorActor) override;
