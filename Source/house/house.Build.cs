@@ -19,7 +19,10 @@ public class house : ModuleRules
 			"GameplayStateTreeModule",
 			"UMG",
             "NavigationSystem",
-            "GameplayTasks"
+            "GameplayTasks",
+            "GeometryCollectionEngine",
+            "ChaosSolverEngine",
+            "PhysicsCore"
         });
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
