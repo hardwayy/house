@@ -21,6 +21,8 @@ AGrabbableActor::AGrabbableActor()
     BaseMesh->SetAngularDamping(0.5f);
     BaseMesh->SetNotifyRigidBodyCollision(true);
 
+    BaseMesh->BodyInstance.bUseCCD = true;
+
     // I tag vanno sulla mesh perché è quella che colpiamo col raggio
     BaseMesh->ComponentTags.Add(FName("CanGrab"));
 }
