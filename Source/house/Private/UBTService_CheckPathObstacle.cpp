@@ -46,27 +46,41 @@ void UUBTService_CheckPathObstacle::TickNode(UBehaviorTreeComponent& OwnerComp, 
 	// Aumentiamo leggermente il raggio se siamo in movimento veloce per aprire prima
 	float DynamicDistance = CheckDistance * 1.1f;
 	FVector End = Start + (DirectionToTarget * DynamicDistance);
+	bool bShouldCheckVisuals = true; // Di base controlliamo, a meno che il NavMesh non ci dica "Sicuramente Libero"
+
 	UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld());
 	if (NavSys)
 	{
-		// Recuperiamo l'istanza dei dati di navigazione (Il NavMesh corrente)
 		ANavigationData* NavData = NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate);
-
 		if (NavData)
 		{
 			FVector NavHitLoc;
-			// Raycast diretto sui dati di navigazione.
-			// Ritorna TRUE se colpisce un bordo (percorso bloccato).
-			// Ritorna FALSE se il raggio viaggia libero (percorso calpestabile).
-			bool bIsPathBlocked = NavData->Raycast(Start, End, NavHitLoc, nullptr);
+			// Raycast: TRUE = Muro/Buco (Bloccato), FALSE = Pavimento (Libero)
+			bool bIsNavBlocked = NavData->Raycast(Start, End, NavHitLoc, nullptr);
 
-			if (!bIsPathBlocked)
+			// Se il NavMesh dice "Libero", verifichiamo se siamo BLOCCATI FISICAMENTE.
+			if (!bIsNavBlocked)
 			{
-				// VIA LIBERA! Il NavMesh dice che si può passare.
-				// Significa che se c'è una porta, è aperta (il NavMesh dinamico si è aggiornato).
-				// Quindi usciamo e NON cerchiamo di interagire.
-				UE_LOG(LogTemp, Log, TEXT("Path libero secondo il NavMesh, nessuna interazione necessaria."));
-				return;
+				// Calcoliamo la velocità corrente (lunghezza del vettore Velocity)
+				float CurrentSpeed = AIPawn->GetVelocity().Size();
+
+				// SOGLIA DI BLOCCO: 
+				// Se ci stiamo muovendo a meno di 10 cm/s (praticamente fermi) 
+				// significa che stiamo spingendo contro qualcosa (la porta chiusa).
+				// In quel caso IGNORIAMO il NavMesh e facciamo comunque il controllo visivo.
+				bool bIsPhysicallyStuck = (CurrentSpeed < 10.0f);
+
+				if (!bIsPhysicallyStuck)
+				{
+					// Se il percorso è libero E ci stiamo muovendo bene -> È davvero libero (Porta Aperta).
+					// Usciamo per non chiudere la porta mentre passiamo.
+					return;
+				}
+				else
+				{
+					// Debug: NavMesh dice libero, ma siamo fermi -> Failsafe attivo!
+					UE_LOG(LogTemp, Warning, TEXT("FAILSAFE: NavMesh dice libero ma sono bloccato (Speed: %f). Controllo porta."), CurrentSpeed);
+				}
 			}
 		}
 	}
