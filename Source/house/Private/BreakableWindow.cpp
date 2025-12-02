@@ -2,6 +2,7 @@
 	#include "Components/StaticMeshComponent.h"
 	#include "GeometryCollection/GeometryCollectionComponent.h"
 	#include "GameFramework/Character.h" 
+	#include "Perception/AISense_Hearing.h"
 	#include "Field/FieldSystemTypes.h" // Necessario per applicare Strain precisi
 
 	ABreakableWindow::ABreakableWindow()
@@ -126,6 +127,15 @@
 
 		// Impulso Spinta
 		ShatteredMesh->AddRadialImpulse(HitResult.ImpactPoint, 500.0f, ImpactForce * 2.0f, ERadialImpulseFalloff::RIF_Linear, true);
+
+		UAISense_Hearing::ReportNoiseEvent(
+			GetWorld(),
+			GetActorLocation(),
+			2.0f, // Loudness (1.0 = normale, aumentalo per suoni forti)
+			this, // Instigator (chi ha fatto il rumore)
+			0.0f, // Max Range (0 = usa range udito ascoltatore)
+			FName("GlassBreak") // Tag opzionale
+		);
 
 		BreakWindow(HitResult.ImpactPoint);
 	}

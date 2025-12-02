@@ -42,6 +42,5 @@ public:
 	void OnAIStateChanged(E_NeighborState NewState);
 
 private:
-	// Funzione interna per aggiornare il testo
 	void UpdateDebugText();
 };

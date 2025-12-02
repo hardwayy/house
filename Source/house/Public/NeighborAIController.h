@@ -10,6 +10,7 @@
 // FIX 2: Forward Declarations. Diciamo al compilatore "Queste classi esistono, fidati".
 class UAIPerceptionComponent;
 class UAISenseConfig_Sight;
+class UAISenseConfig_Hearing; 
 class UBehaviorTree;
 
 UCLASS()
@@ -43,6 +44,9 @@ private:
 
 	// La configurazione specifica per la VISTA
 	UAISenseConfig_Sight* SightConfig;
+
+	UPROPERTY(VisibleAnywhere, Category = "AI")
+	UAISenseConfig_Hearing* HearingConfig;
 
 	FBlackboard::FKey CurrentStateKeyID;
 	FDelegateHandle BlackboardDelegateHandle;
