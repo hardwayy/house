@@ -22,4 +22,6 @@ public:
 	// --- INTERFACCIA ---
 	// Questa funzione viene chiamata quando premi 'E'
 	virtual void Interact_Implementation(AActor* InstigatorActor) override;
+
+
 };

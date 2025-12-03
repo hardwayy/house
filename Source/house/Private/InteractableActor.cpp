@@ -14,6 +14,6 @@ AInteractableActor::AInteractableActor()
 
 void AInteractableActor::Interact_Implementation(AActor* InstigatorActor)
 {
-
+    
 	UE_LOG(LogTemp, Log, TEXT("Interact called on: %s. Overwrite this in Blueprint to do something!"), *GetName());
 }
